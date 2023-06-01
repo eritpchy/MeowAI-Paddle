@@ -2,83 +2,67 @@ import gettext
 import json
 import os
 import time
+import sys
+import io
+import tempfile
+
+import numpy as np
+sys.path.append("/home/jason/miniconda3/envs/MeowAI/lib/")
 from io import BytesIO
 
-import torch
 from PIL import Image, ImageOps
 
 from src.detect import detect_dict
+from src.detect.clas_tag import ClasTag
 from src.locale import locale
 from src.log.logger import logger
 
+
+import paddle
+from paddleclas import PaddleClas
+clas = None 
+
 model = None
-model_name = 'yolov5m6'
+model_name = 'PPHGNet_small_ssld'
 _ = locale.lc
 
 
 def init_model():
-    global model
+    global clas
     global model_name
     detect_dict.init_model_var()
     start_time = time.time()
     model_name = os.environ.get('model', model_name)
     text = _("Load model:")
     logger.info(f'{text} {model_name}')
-    try:
-        device = None
-        if torch.cuda.is_available():
-            logger.info("CUDA is available.")
-            device = torch.device('cuda')
-        else:
-            logger.info("CUDA is not available.")
-
-        if torch.backends.mps.is_available():
-            logger.info("MPS is available.")
-            device = torch.device("mps")
-        else:
-            logger.info("MPS is not available.")
-        model_file = f'./{model_name}.pt'
-        model = torch.hub.load('./yolov5', 'custom', source='local', path=model_file, device=device)
-    except Exception as e:
-        logger.error(e)
-        exit(-1)
+    clas = PaddleClas(model_name=model_name, debug=False, show_log=False)
     end_time = time.time()
     elapsed_time = round(end_time - start_time, 2)
     logger.info(f'{text} {elapsed_time} s')
 
 
-def detect(image_path):
+def detect(image_data):
+    tempFilePath = None
     try:
+        clasTags = []
         # logger.info(f"正在识别 %s", image_path)
-        image = Image.open(BytesIO(image_path))
-        text_image_size = _("image size:")
-        # logger.debug(f'{text_image_size} {image.width}x{image.height}')
-        # 将图片调整为指定大小，并使用 padding 的方式进行调整
-        new_size = (1280, 1280)
-        image = ImageOps.pad(image, new_size)
-        text_image_size_changed = _("image size changed:")
-        # logger.debug(f'{text_image_size_changed} {image.width}x{image.height}')
-        results = model(image)
-        # 将检测结果转换为 Dataframe
-        df = results.pandas().xyxy[0]
-        # 按照置信度得分从大到小排序
-        df = df.sort_values(by='confidence', ascending=False)
-        # 获取置信度最大的检测结果
-        if len(df.values.tolist()) == 0:
-            return None, None
-        best_result = df.iloc[0]
-        # 获取类别和置信度
-        labels_index = best_result['class']
-        confidence = best_result['confidence']
-        if labels_index is None:
-            # logger.info('没有识别到任何物体')
-            return None, None
-        label_text = model.names[labels_index]
-        return label_text, confidence
+        results = clas.predict(image_data)
+        for r in results:
+            r = r[0]
+            class_id = r['class_ids'][0]
+            class_label = r['label_names'][0]
+            class_score = r['scores'][0]
+            class_label = detect_dict.get_tag_by_label(class_id, class_label, locale.language)
+            exclude = detect_dict.is_label_exclude(class_label)
+            clasTags.append(ClasTag(class_id, class_label, class_score, exclude))
+        return clasTags
     except Exception as e:
         logger.exception("Error: %s", e)
-        return None, None
-
+        exit(-1)
+        return []
+    finally:
+        clas.predictor.predictor.try_shrink_memory()
+        
 
 def detect_dir():
     global files, f

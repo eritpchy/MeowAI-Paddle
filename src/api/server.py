@@ -1,6 +1,10 @@
 import json
 import os
 import time
+import io
+import numpy as np
+import tempfile
+from PIL import Image, ImageOps
 from typing import Optional
 
 from src import log
@@ -10,6 +14,9 @@ from src.executor import executor
 from src.locale import locale
 from src.log.logger import logger
 
+from paddleocr import PaddleOCR
+from sqlitedict import SqliteDict
+
 score_threshold = 0.7
 offset = 0
 limit = 100
@@ -18,45 +25,18 @@ total_done_list = []
 _ = locale.lc
 _executor: Optional[executor.DetectExecutor] = None
 
+ocr = PaddleOCR(use_angle_cls=True, lang="ch", debug=False, show_log=False)
+done_list_db = SqliteDict("docker/data/done_list.sqlite", encode=json.dumps, decode=json.loads, autocommit=True)
 
 class DetectFile:
 
-    def __init__(self, id, filename, type, tag, model, score, exclude, cost):
+    def __init__(self, id, filename, type, clasTagDicts, model, cost):
         self.id = id
         self.filename = filename
         self.type = type
-        self.tag = tag
+        self.clasTagDicts = clasTagDicts
         self.model = model
-        self.score = score
-        self.exclude = exclude
         self.cost = cost
-
-
-class DetectFileEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, DetectFile):
-            return {'id': obj.id,
-                    'filename': obj.filename,
-                    'type': obj.type,
-                    'tag': obj.tag,
-                    'model': obj.model,
-                    'score': obj.score,
-                    'exclude': obj.exclude,
-                    'cost': obj.cost
-                    }
-        return json.JSONEncoder.default(self, obj)
-
-
-class DetectFileDecoder(json.JSONDecoder):
-    def __init__(self, *args, **kwargs):
-        json.JSONDecoder.__init__(self, object_hook=self.dict_to_object, *args, **kwargs)
-
-    def dict_to_object(self, d):
-        if 'id' in d:
-            return DetectFile(d['id'], d['filename'], d['type'], d['tag'], d['model'], d['score'], d.get('exclude'),
-                              d.get('cost'))
-        return d
-
 
 def start_indexing():
     global offset
@@ -76,10 +56,10 @@ def start_indexing():
             else:
                 _limit = limit
             text_info = _("Detect %d images, handle %d photos, total handle %d photos")
-            logger.info(f'{text_info}', len(detect_list), len(done_list), len(total_done_list))
+            logger.info(f'{text_info}', len(detect_list), len(done_list), len(done_list_db))
         # check has more
         total = api.count_total_photos()
-        if total > len(total_done_list):
+        if total > len(done_list_db):
             has_more = True
             text_wake = _("Wake...")
             logger.info(text_wake)
@@ -92,27 +72,68 @@ def start_indexing():
             time.sleep(60 * 5)
 
 
-def detect_photo(id, p):
-    start_time = time.time()
-    thumbnail = p['additional']['thumbnail']
-    cache_key = thumbnail['cache_key']
-    image_content = api.get_photo_by_id(id, cache_key, api.headers)
-    label_text, score = detect.detect(image_content)
-    end_time = time.time()
-    elapsed_time = round(end_time - start_time, 2)
-    if detect_dict.is_label_in_dict(label_text):
-        detect_tag = detect_dict.get_tag_by_label(label_text, locale.language)
-    else:
-        detect_tag = None
-    score = round(score, 3) if score else 0
-    is_exclude = detect_dict.is_label_exclude(label_text)
-    detect_file = DetectFile(id, filename=p['filename'], type=p['type'], tag=detect_tag, model=detect.model_name,
-                             score=score, exclude=is_exclude, cost=elapsed_time)
-    if detect_tag is not None and score >= score_threshold and not is_exclude:
+def ocr_photo(id, p, image_data):
+    # return
+    try:
+        result = ocr.ocr(image_data, cls=True)
+        lines = ""
+        for idx in range(len(result)):
+            res = result[idx]
+            for line in res:
+                text, score = line[1]
+                if score > score_threshold:
+                    lines += text
+                    lines += " "
+                # print(f'id: {id} ocr_line: {line}')
+        ocr.text_recognizer.predictor.try_shrink_memory()
+        logger.info(f"ocr: {lines}")
         exist_tags = p['additional']['tag']
-        bind_tag(id, tag_name=detect_tag, exist_tags=exist_tags)
-    return detect_file
+        if lines != "":
+            resolution = p['additional']['resolution']
+            # fixed 图片信息不生成, 导致无法插入描述
+            if (resolution['width'] == 0 or resolution['height'] == 0):
+                tag_id = bind_tag(id, "临时", exist_tags)
+                api.remove_tags(id, [tag_id])
+            api.set_description(id, lines)
+    except Exception as e:
+        logger.exception("Error: %s", e)
 
+
+def detect_photo(id, p):
+    image = None
+    image_is_temp = False
+    try:
+        start_time = time.time()
+        thumbnail = p['additional']['thumbnail']
+        cache_key = thumbnail['cache_key']
+        filename = p['filename']
+        image_content = api.get_photo_by_id(id, cache_key, api.headers)
+        image, image_is_temp = process_image_content(filename, image_content)
+        clasTags = detect.detect(image)
+        clasTagDicts = None
+        if len(clasTags) > 0:
+            clasTagDicts = [clasTag.__dict__ for clasTag in clasTags]
+        ocr_photo(id, p, image)
+        end_time = time.time()
+        elapsed_time = round(end_time - start_time, 2)
+        detect_file = DetectFile(id, filename=filename, type=p['type'], 
+            clasTagDicts=clasTagDicts, model=detect.model_name, cost=elapsed_time)
+        exist_tags = p['additional']['tag']
+        for clasTag in clasTags:
+            if clasTag is not None and clasTag.score >= score_threshold and not clasTag.exclude:
+                bind_tag(id, tag_name=clasTag.label, exist_tags=exist_tags)
+        return detect_file
+    finally:
+        if image_is_temp:
+            deleteFile(image)
+
+def deleteFile(path):
+    if path is None:
+        return False
+    if not os.path.exists(path):
+        return False
+    os.remove(path)
+    return True
 
 def detect_photo_list(list):
     detect_list = []
@@ -126,7 +147,7 @@ def detect_photo_list(list):
     results: Optional[map] = _executor.wait_completion()
     done_list = []
     for key, value in results.items():
-        if value.tag is not None:
+        if value.clasTagDicts is not None:
             detect_list.append(value)
         done_list.append(value)
     end_time = time.time()
@@ -135,32 +156,41 @@ def detect_photo_list(list):
     return detect_list, done_list
 
 
-def read_done_list():
+# return image_content/temp_image_path, is_temp
+def process_image_content(filename, image_content):
+    # logger.info(f"正在识别 %s", image_path)
+    tempfile_path = None
+    if type(image_content) == str:
+        return image_content, False
+    image_data = None
     try:
-        done_list_file = get_done_list_file_path()
-        with open(done_list_file, 'r') as f:
-            data = json.load(f, cls=DetectFileDecoder)
-        global total_done_list
-        total_done_list = data
-        text_done = _("read done_list: ")
-        logger.info(f'{text_done}{len(total_done_list)}')
-    except FileNotFoundError:
-        os.mknod(done_list_file)
-        logger.info(_("done_list created！"))
+        image = Image.open(io.BytesIO(image_content))
+        if (filename.lower().endswith(".gif")):
+            image = image.convert("RGB")
+        image_data = np.array(image)
     except Exception as e:
         logger.exception(e)
 
-
-def get_done_list_file_path():
-    root_path = os.path.abspath(os.getcwd())
-    done_list_file = os.path.join(root_path, 'done_list.json')
-    return done_list_file
+    if (image_data is None or image_data.ndim < 3):
+        tempfile_path = os.path.join(tempfile.gettempdir(), filename)
+        with io.open(tempfile_path, "wb") as f:
+            f.write(image_content)
+        return tempfile_path, True
+    else:
+        return image_data, False
+    
 
 
 def has_done(id):
-    for d in total_done_list:
-        if d.id == id and d.model == detect.model_name and (
-                d.tag is not None or (d.tag is None and d.model == detect.model_name)):
+    id_str = str(id)
+    if id_str not in done_list_db:
+        return False
+    d = done_list_db[id_str]
+    if d is not None:
+        clasTagDicts = d['clasTagDicts']
+        model = d['model']
+        if model == detect.model_name and (
+                clasTagDicts is not None or (clasTagDicts is None and model == detect.model_name)):
             return True
     return False
 
@@ -168,10 +198,14 @@ def has_done(id):
 def add_to_done_list(list):
     if len(list) == 0:
         return
-    for done in list:
-        total_done_list.append(done)
-    with open(get_done_list_file_path(), 'w') as f:
-        json.dump(total_done_list, f, cls=DetectFileEncoder, ensure_ascii=False)
+    for detect_file in list:
+        done_list_db[str(detect_file.id)] = {
+            "filename": detect_file.filename,
+            "type": detect_file.type,
+            "clasTagDicts": detect_file.clasTagDicts,
+            "model": detect_file.model,
+            "cost": detect_file.cost,
+        }
 
 
 def bind_tag(id, tag_name, exist_tags):
@@ -188,13 +222,13 @@ def bind_tag(id, tag_name, exist_tags):
                 return
 
     api.bind_tag(id, tag_id, tag_name)
+    return tag_id
 
 
 def start(executor):
     global _executor
     _executor = executor
     api.init_var()
-    read_done_list()
     start_indexing()
 
 

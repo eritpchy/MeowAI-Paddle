@@ -134,3 +134,6 @@ make_docker.sh
 .DS_Store
 test.py
 
+docker/cudnn-linux-x86_64-8.4.1.50_cuda11.6-archive.tar.xz
+docker/app.tar
+docker/requirements.txt

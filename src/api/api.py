@@ -4,6 +4,7 @@ import os
 from typing import Dict
 
 import requests
+import functools
 
 from src.api import error_codes
 from src.locale import locale
@@ -26,13 +27,16 @@ pwd = None
 token_error_code = ['119', '120', '150']
 _ = locale.lc
 
+s = requests.Session()
+s.request = functools.partial(s.request, timeout=(3,20))
 
 def get_token():
     global cookie
     global token
     global headers
-    url = f'{base_url}/webapi/auth.cgi?api=SYNO.API.Auth&session=Foto&version=7&method=login&account={username}&passwd={pwd}&format=cookie&enable_syno_token=yes'
-    response = requests.get(url)
+    url = f'{base_url}/webapi/auth.cgi?api=SYNO.API.Auth&version=3&method=login&account={username}&passwd={pwd}&format=cookie&enable_syno_token=yes'
+    #url = f'{base_url}/webapi/auth.cgi?api=SYNO.API.Auth&session=Foto&version=7&method=login&account={username}&passwd={pwd}&format=cookie&enable_syno_token=yes'
+    response = s.get(url)
     try:
         data = json.loads(response.content)
         if data['success']:
@@ -59,7 +63,7 @@ def get_tags():
             'limit': '500',
             'offset': '0'
         }
-        response = requests.post(url, data, headers=headers)
+        response = s.post(url, data, headers=headers)
         data = json.loads(response.content)
         if data['success']:
             list = data['data']['list']
@@ -84,15 +88,14 @@ def get_photos(offset, limit):
             "version": "1",
             "offset": offset,
             "limit": limit,
-            "additional": '["thumbnail","tag"]',
+            "additional": '["thumbnail","tag", "resolution"]',
             "timeline_group_unit": '"day"',
             #     'start_time':,
             # 'end_time':
         }
         # logger.info(headers)
-        response = requests.post(url, data=data, headers=headers)
+        response = s.post(url, data=data, headers=headers)
         data = json.loads(response.content)
-        # logger.info(data)
         if data['success']:
             list = data['data']['list']
             logger.info(f'get_photos: {len(list)}')
@@ -107,6 +110,27 @@ def get_photos(offset, limit):
         return None
 
 
+def download_photo_by_id(id):
+    try:
+        url = f'{base_url}/webapi/entry.cgi/{api_pre}.Download'
+        data = {
+            'api': f'{api_pre}.Download',
+            'method': 'download',
+            'version': '1',
+            'item_id': f'[{id}]',
+            'force_download': True,
+        }
+        response = s.post(url, data, headers=headers)
+        if response.status_code == 200:
+            return response.content
+        else:
+            logger.info(response.status_code)
+        return None
+    except Exception as e:
+        logger.exception(e)
+        return None
+
+
 def get_photo_by_id(id, cache_key, headers):
     try:
         # logger.info(f'{id}  {cache_key}')
@@ -115,11 +139,12 @@ def get_photo_by_id(id, cache_key, headers):
         headers[
             'Accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7'
         headers['Accept-Encoding'] = 'gzip, deflate'
-        response = requests.get(url, headers=headers)
+        response = s.get(url, headers=headers)
         if response.status_code == 200:
             return response.content
         else:
-            logger.info(response.content)
+            logger.info(response.status_code)
+            return download_photo_by_id(id)
         return None
     except Exception as e:
         logger.exception(e)
@@ -135,7 +160,7 @@ def create_tag(tag_name):
             'version': '1',
             'name': tag_name,
         }
-        response = requests.post(url, data, headers=headers)
+        response = s.post(url, data, headers=headers)
         data = json.loads(response.content)
         if data['success']:
             text = _("tag generate success:")
@@ -160,7 +185,7 @@ def bind_tag(id, tag_id, tag_name):
         'tag': f'[{tag_id}]'
     }
     # logger.info(data)
-    response = requests.post(url, data, headers=headers)
+    response = s.post(url, data, headers=headers)
     try:
         data = json.loads(response.content)
         if data['success']:
@@ -188,16 +213,16 @@ def get_tag_id_by_name(tag_name):
 
 def get_photo_info_by_id(id):
     try:
-        url = f'{base_url}/webapi/entry.cgi/SYNO.FotoTeam.Browse.Item'
+        url = f'{base_url}/webapi/entry.cgi/{api_pre}.Browse.Item'
         params = {
-            'api': f'SYNO.{api_pre}.Browse.Item',
+            'api': f'{api_pre}.Browse.Item',
             'method': 'get',
             'version': 2,
             'id': f'[{id}]',
             'additional': ["tag"]
         }
         # 发送请求
-        response = requests.get(url, params=params, headers=headers)
+        response = s.get(url, params=params, headers=headers)
         # 解析响应结果
         result = response.json()
         if result['success']:
@@ -206,6 +231,8 @@ def get_photo_info_by_id(id):
     except Exception as e:
         logger.exception(e)
         return None
+
+
 
 
 def remove_tags(id, tag_ids):
@@ -217,7 +244,7 @@ def remove_tags(id, tag_ids):
         'id': f'[{id}]',
         'tag': f'{tag_ids}'
     }
-    response = requests.post(url, data, headers=headers)
+    response = s.post(url, data, headers=headers)
     try:
         data = response.json()
         if data['success']:
@@ -245,7 +272,7 @@ def count_total_photos():
         'version': '2',
         'timeline_group_unit': 'day',
     }
-    response = requests.post(url, data, headers=headers)
+    response = s.post(url, data, headers=headers)
     try:
         data = response.json()
         if data['success']:
@@ -266,6 +293,29 @@ def count_total_photos():
         text = _("count_total_photos failed:")
         logger.error(f'{text} %s', e)
         return 0
+
+
+def set_description(id, description):
+    try:
+        url = f'{base_url}/webapi/entry.cgi/{api_pre}.Browse.Item'
+        params = {
+            'api': f'{api_pre}.Browse.Item',
+            'method': 'set',
+            'version': 2,
+            'id': f'[{id}]',
+            'description': description,
+        }
+        # 发送请求
+        response = s.get(url, params=params, headers=headers)
+        # 解析响应结果
+        result = response.json()
+        # logger.info(f'set_description:{result} params: {params}')
+        if result['success']:
+            return True
+        return False
+    except Exception as e:
+        logger.exception(e)
+        return False
 
 
 def get_error_code(response: Dict[str, object]) -> int:

@@ -50,19 +50,14 @@ class DetectExecutor:
                 task: Optional[DetectTask] = self.task_queue.get()
                 logger.debug(f'process_task: start task_id = {task.id} thread = {threading.currentThread().name}')
                 result = task.func(task.id, task.p)
-                text_info = _("Progress: %s, %s detect %s, score %.2f, cost %.2fs%s")
                 self.results[task.id] = result
                 with self.lock:
-                    logger.info(f'{text_info}',
-                                f'{self.index + 1}/{total}',
-                                result.filename,
-                                result.tag,
-                                round(result.score, 2) if result.score else 0,
-                                result.cost,
-                                f'{", excluded" if result.exclude else ""}')
+                    logger.info(f"Progress: {self.index + 1}/{total}, {result.filename} detect: {' '.join([str(clasTagDict['label']) for clasTagDict in result.clasTagDicts])}, cost {result.cost}s")
                     self.index = self.index + 1
             except Exception as e:
                 logger.exception(e)
+                if ('cudaErrorIllegalAddress' in repr(e)):
+                    exit(-1)
 
     def wait_completion(self):
         wait(self.futures)
@@ -82,4 +77,4 @@ class DetectExecutor:
 
 
 def init_executor():
-    return DetectExecutor(3, 3)
+    return DetectExecutor(1, 1)
