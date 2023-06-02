@@ -16,6 +16,10 @@ services:
       - ./data:/MeowAI/docker/data
       - ./data/.paddleocr:/root/.paddleocr
       - ./data/.paddleclas:/root/.paddleclas
+    tmpfs:
+      - /var/run
+      - /tmp
+    restart: always
     deploy:
       resources:
         limits:

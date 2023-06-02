@@ -4,6 +4,8 @@ import time
 import io
 import numpy as np
 import tempfile
+import mimetypes
+import subprocess
 from PIL import Image, ImageOps
 from typing import Optional
 
@@ -16,6 +18,7 @@ from src.log.logger import logger
 
 from paddleocr import PaddleOCR
 from sqlitedict import SqliteDict
+
 
 score_threshold = 0.7
 offset = 0
@@ -59,17 +62,21 @@ def start_indexing():
             logger.info(f'{text_info}', len(detect_list), len(done_list), len(done_list_db))
         # check has more
         total = api.count_total_photos()
-        if total > len(done_list_db):
+        done_list_db_len = len(done_list_db)
+        if total > done_list_db_len:
             has_more = True
             text_wake = _("Wake...")
-            logger.info(text_wake)
+            logger.info(f"{text_wake} total: {total} done_list_db_len: {done_list_db_len}")
             # reset offset
             offset = 0
         else:
-            text_sleep = _("Sleep...")
-            logger.info(text_sleep)
-            # sleep for a while
-            time.sleep(60 * 5)
+            while True:
+                text_sleep = _("Sleep...")
+                logger.info(text_sleep)
+                # sleep for a while
+                time.sleep(60 * 5)
+                if api.count_total_photos() > total:
+                    break
 
 
 def ocr_photo(id, p, image_data):
@@ -110,7 +117,7 @@ def detect_photo(id, p):
         image_content = api.get_photo_by_id(id, cache_key, api.headers)
         image, image_is_temp = process_image_content(filename, image_content)
         clasTags = detect.detect(image)
-        clasTagDicts = None
+        clasTagDicts = []
         if len(clasTags) > 0:
             clasTagDicts = [clasTag.__dict__ for clasTag in clasTags]
         ocr_photo(id, p, image)
@@ -125,9 +132,9 @@ def detect_photo(id, p):
         return detect_file
     finally:
         if image_is_temp:
-            deleteFile(image)
+            delete_file_path(image)
 
-def deleteFile(path):
+def delete_file_path(path):
     if path is None:
         return False
     if not os.path.exists(path):
@@ -162,6 +169,19 @@ def process_image_content(filename, image_content):
     tempfile_path = None
     if type(image_content) == str:
         return image_content, False
+    mime, _ = mimetypes.guess_type(filename)
+    logger.info(f"mime:{mime}")
+    if mime.startswith('video/'):
+        videofile = os.path.join(tempfile.gettempdir(), filename)
+        try:
+            with io.open(videofile, "wb") as f:
+                f.write(image_content)
+            tempfile_path = os.path.join(tempfile.gettempdir(), f"{filename}.png")
+            subprocess.run(['ffmpeg', '-i', videofile, '-y', '-vf', 'select=eq(n\\,0)', tempfile_path])
+            if os.path.exists(tempfile_path):
+                return tempfile_path, True
+        finally:
+            delete_file_path(videofile)
     image_data = None
     try:
         image = Image.open(io.BytesIO(image_content))

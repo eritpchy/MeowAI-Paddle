@@ -58,7 +58,6 @@ def detect(image_data):
         return clasTags
     except Exception as e:
         logger.exception("Error: %s", e)
-        exit(-1)
         return []
     finally:
         clas.predictor.predictor.try_shrink_memory()

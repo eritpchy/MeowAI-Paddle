@@ -118,13 +118,14 @@ def download_photo_by_id(id):
             'method': 'download',
             'version': '1',
             'item_id': f'[{id}]',
-            'force_download': True,
+            'force_download': 'true',
         }
+        headers['Accept-Encoding'] = 'gzip, deflate'
         response = s.post(url, data, headers=headers)
         if response.status_code == 200:
             return response.content
         else:
-            logger.info(response.status_code)
+            logger.info(response.content)
         return None
     except Exception as e:
         logger.exception(e)
