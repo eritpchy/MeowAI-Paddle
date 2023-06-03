@@ -1,5 +1,5 @@
 #!/bin/bash
 set -e
 cd ${0%/*}
-./build.sh
-./run.sh
+./build_gpu.sh
+./run_gpu.sh

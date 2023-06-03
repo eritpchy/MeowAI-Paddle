@@ -1,0 +1,23 @@
+version: '3'
+services:
+  meowai:
+    build:
+      context: .
+      dockerfile: cpu.Dockerfile
+    container_name: meowai
+    environment:
+      - user=USERNAME
+      - pwd=PASSWORD
+      - mode=share
+      - lang=zh
+      - ip=127.0.0.1:5000
+    network_mode: "host"
+    volumes:
+      - /etc/localtime:/etc/localtime
+      - ./data:/MeowAI/docker/data
+      - ./data/.paddleocr:/root/.paddleocr
+      - ./data/.paddleclas:/root/.paddleclas
+    tmpfs:
+      - /var/run
+      - /tmp
+    restart: always

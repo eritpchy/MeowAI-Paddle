@@ -3,7 +3,7 @@ services:
   meowai:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: gpu.Dockerfile
     container_name: meowai
     environment:
       - user=USERNAME
@@ -11,6 +11,7 @@ services:
       - mode=share
       - lang=zh
       - ip=127.0.0.1:5000
+    network_mode: "host"
     volumes:
       - /etc/localtime:/etc/localtime
       - ./data:/MeowAI/docker/data

@@ -6,6 +6,7 @@ import numpy as np
 import tempfile
 import mimetypes
 import subprocess
+import magic
 from PIL import Image, ImageOps
 from typing import Optional
 
@@ -16,7 +17,6 @@ from src.executor import executor
 from src.locale import locale
 from src.log.logger import logger
 
-from paddleocr import PaddleOCR
 from sqlitedict import SqliteDict
 
 
@@ -28,7 +28,7 @@ total_done_list = []
 _ = locale.lc
 _executor: Optional[executor.DetectExecutor] = None
 
-ocr = PaddleOCR(use_angle_cls=True, lang="ch", debug=False, show_log=False)
+ocr = None
 done_list_db = SqliteDict("docker/data/done_list.sqlite", encode=json.dumps, decode=json.loads, autocommit=True)
 
 class DetectFile:
@@ -43,16 +43,20 @@ class DetectFile:
 
 def start_indexing():
     global offset
-    has_more = True
+    global ocr
     _limit = limit
     while True:
+        photo_ids = list()
+        has_more = True
+        offset = 0
         while has_more:
-            list = api.get_photos(offset, _limit)
-            has_more = list is not None and len(list) > 0
+            photo_list = api.get_photos(offset, _limit)
+            photo_ids.extend(list(str(item['id']) for item in photo_list))
+            has_more = photo_list is not None and len(photo_list) > 0
             if not has_more:
                 break
-            detect_list, done_list = detect_photo_list(list)
-            offset += len(list)
+            detect_list, done_list = detect_photo_list(photo_list)
+            offset += len(photo_list)
             if len(done_list) == 0:
                 # If all files are skipped, increase limit
                 _limit = max_limit
@@ -60,6 +64,16 @@ def start_indexing():
                 _limit = limit
             text_info = _("Detect %d images, handle %d photos, total handle %d photos")
             logger.info(f'{text_info}', len(detect_list), len(done_list), len(done_list_db))
+        # if picture deleted from server
+        photo_ids_deleted = list()
+        for key in done_list_db:
+            if key not in photo_ids:
+                photo_ids_deleted.append(key)
+        for key in photo_ids_deleted:
+            logger.info(f'Delete id: {key} from database')
+            del done_list_db[key]
+        photo_ids = None
+        photo_ids_deleted = None
         # check has more
         total = api.count_total_photos()
         done_list_db_len = len(done_list_db)
@@ -70,16 +84,23 @@ def start_indexing():
             # reset offset
             offset = 0
         else:
+            if ocr is not None:
+                logger.info("Exit, free memory")
+                exit(0)
             while True:
                 text_sleep = _("Sleep...")
                 logger.info(text_sleep)
                 # sleep for a while
-                time.sleep(60 * 5)
-                if api.count_total_photos() > total:
+                time.sleep(10)
+                if api.count_total_photos() != total:
                     break
 
 
 def ocr_photo(id, p, image_data):
+    global ocr
+    if ocr is None:
+        from paddleocr import PaddleOCR
+        ocr = PaddleOCR(use_angle_cls=True, lang="ch", debug=False, show_log=False)
     # return
     try:
         result = ocr.ocr(image_data, cls=True)
@@ -169,8 +190,7 @@ def process_image_content(filename, image_content):
     tempfile_path = None
     if type(image_content) == str:
         return image_content, False
-    mime, _ = mimetypes.guess_type(filename)
-    logger.info(f"mime:{mime}")
+    mime = magic.from_buffer(image_content, mime=True)
     if mime.startswith('video/'):
         videofile = os.path.join(tempfile.gettempdir(), filename)
         try:

@@ -18,30 +18,29 @@ from src.locale import locale
 from src.log.logger import logger
 
 
-import paddle
-from paddleclas import PaddleClas
 clas = None 
-
 model = None
 model_name = 'PPHGNet_small_ssld'
 _ = locale.lc
 
 
 def init_model():
-    global clas
     global model_name
     detect_dict.init_model_var()
     start_time = time.time()
     model_name = os.environ.get('model', model_name)
     text = _("Load model:")
     logger.info(f'{text} {model_name}')
-    clas = PaddleClas(model_name=model_name, debug=False, show_log=False)
     end_time = time.time()
     elapsed_time = round(end_time - start_time, 2)
     logger.info(f'{text} {elapsed_time} s')
 
 
 def detect(image_data):
+    global clas
+    if clas is None:
+        from paddleclas import PaddleClas
+        clas = PaddleClas(model_name=model_name, debug=False, show_log=False)
     tempFilePath = None
     try:
         clasTags = []
@@ -61,7 +60,7 @@ def detect(image_data):
         return []
     finally:
         clas.predictor.predictor.try_shrink_memory()
-        
+
 
 def detect_dir():
     global files, f
