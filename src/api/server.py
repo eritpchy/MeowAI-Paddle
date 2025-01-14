@@ -91,7 +91,7 @@ def start_indexing():
                 text_sleep = _("Sleep...")
                 logger.info(text_sleep)
                 # sleep for a while
-                time.sleep(10)
+                time.sleep(60)
                 if api.count_total_photos() != total:
                     break
 
