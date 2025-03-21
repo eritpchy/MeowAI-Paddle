@@ -5,6 +5,8 @@ from typing import Dict
 
 import requests
 import functools
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from src.api import error_codes
 from src.locale import locale
@@ -28,7 +30,23 @@ token_error_code = ['119', '120', '150']
 _ = locale.lc
 
 s = requests.Session()
-s.request = functools.partial(s.request, timeout=(3,20))
+# 配置重试策略，包括超时情况
+retry_strategy = Retry(
+    total=3,  # 总共重试3次
+    backoff_factor=1,  # 重试间隔时间因子
+    status_forcelist=[429, 500, 502, 503, 504],  # 遇到这些状态码时重试
+    allowed_methods=["HEAD", "GET", "OPTIONS", "POST", "PUT", "DELETE", "PATCH"],  # 允许重试的请求方法
+    raise_on_status=False,  # 不因状态码错误而中断重试
+    raise_on_redirect=False,  # 不因重定向而中断重试
+)
+
+# 将重试策略应用到会话的适配器
+adapter = HTTPAdapter(max_retries=retry_strategy)
+s.mount("http://", adapter)
+s.mount("https://", adapter)
+
+# 设置超时时间为300秒
+s.request = functools.partial(s.request, timeout=(3, 300))
 
 def get_token():
     global cookie

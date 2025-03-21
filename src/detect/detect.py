@@ -44,7 +44,6 @@ def detect(image_data):
     tempFilePath = None
     try:
         clasTags = []
-        # logger.info(f"正在识别 %s", image_path)
         results = clas.predict(image_data)
         for r in results:
             r = r[0]

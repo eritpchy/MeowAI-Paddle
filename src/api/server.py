@@ -107,6 +107,8 @@ def ocr_photo(id, p, image_data):
         lines = ""
         for idx in range(len(result)):
             res = result[idx]
+            if not res:
+                continue
             for line in res:
                 text, score = line[1]
                 if score > score_threshold:
@@ -151,6 +153,8 @@ def detect_photo(id, p):
             if clasTag is not None and clasTag.score >= score_threshold and not clasTag.exclude:
                 bind_tag(id, tag_name=clasTag.label, exist_tags=exist_tags)
         return detect_file
+    except Exception as e:
+        logger.exception("Error: %s", e)
     finally:
         if image_is_temp:
             delete_file_path(image)

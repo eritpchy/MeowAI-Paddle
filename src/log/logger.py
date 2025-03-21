@@ -18,9 +18,10 @@ def init_log():
 
     # 创建一个StreamHandler对象，指定输出到sys.stdout
     stream_handler = logging.StreamHandler(sys.stdout)
-
-    # 设置StreamHandler对象的日志级别
+    # 设置立即刷新
     stream_handler.setLevel(level)
+    # 确保每次写入后立即刷新
+    stream_handler.flush = lambda: sys.stdout.flush()
 
     # 创建一个FileHandler对象，指定输出到log.txt文件
     file_handler = logging.FileHandler('logs.txt')
