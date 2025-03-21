@@ -10,6 +10,11 @@ _ = locale.lc
 class Config:
     # 排除种类
     exclude_class = []
+    use_onnx = False
+    onnx_providers = []
+    cls_model_dir = None
+    det_model_dir = None
+    rec_model_dir = None
 
     def __init__(self):
         super().__init__()
@@ -46,6 +51,13 @@ def init_config():
     text_env = _("Env:")
     print(f'{text_env} {"Debug" if is_debug else "Release"}')
     curConfig = Config()
+    curConfig.use_onnx = os.environ.get('use_onnx', curConfig.use_onnx)
+    onnx_provider = os.environ.get('onnx_provider')
+    if onnx_provider:
+        curConfig.onnx_providers = [(onnx_provider, json.loads(os.environ.get('onnx_provider_options', "{}")))]
+    curConfig.cls_model_dir = os.environ.get('cls_model_dir', curConfig.cls_model_dir)
+    curConfig.det_model_dir = os.environ.get('det_model_dir', curConfig.det_model_dir)
+    curConfig.rec_model_dir = os.environ.get('rec_model_dir', curConfig.rec_model_dir)
     exclude_class = os.environ.get('exclude_class', None)
     if exclude_class:
         exclude_class = json.loads(exclude_class)

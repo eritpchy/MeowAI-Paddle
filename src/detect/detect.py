@@ -16,6 +16,7 @@ from src.detect import detect_dict
 from src.detect.clas_tag import ClasTag
 from src.locale import locale
 from src.log.logger import logger
+from src.config import config
 
 
 clas = None 
@@ -40,7 +41,13 @@ def detect(image_data):
     global clas
     if clas is None:
         from paddleclas import PaddleClas
-        clas = PaddleClas(model_name=model_name, debug=False, show_log=False)
+        clas = PaddleClas(
+            model_name=model_name, 
+            debug=True, 
+            show_log=True,
+            use_onnx=config.curConfig.use_onnx,
+            onnx_providers=config.curConfig.onnx_providers,
+        )
     tempFilePath = None
     try:
         clasTags = []
@@ -57,8 +64,6 @@ def detect(image_data):
     except Exception as e:
         logger.exception("Error: %s", e)
         return []
-    finally:
-        clas.predictor.predictor.try_shrink_memory()
 
 
 def detect_dir():

@@ -16,6 +16,7 @@ from src.detect import detect, detect_dict
 from src.executor import executor
 from src.locale import locale
 from src.log.logger import logger
+from src.config import config
 
 from sqlitedict import SqliteDict
 
@@ -100,7 +101,17 @@ def ocr_photo(id, p, image_data):
     global ocr
     if ocr is None:
         from paddleocr import PaddleOCR
-        ocr = PaddleOCR(use_angle_cls=True, lang="ch", debug=False, show_log=False)
+        ocr = PaddleOCR(
+            use_angle_cls=True, 
+            lang="ch", 
+            debug=True, 
+            show_log=True,
+            use_onnx=config.curConfig.use_onnx,
+            onnx_providers=config.curConfig.onnx_providers,
+            cls_model_dir=config.curConfig.cls_model_dir,
+            det_model_dir=config.curConfig.det_model_dir,
+            rec_model_dir=config.curConfig.rec_model_dir,
+        )
     # return
     try:
         result = ocr.ocr(image_data, cls=True)
@@ -115,7 +126,6 @@ def ocr_photo(id, p, image_data):
                     lines += text
                     lines += " "
                 # print(f'id: {id} ocr_line: {line}')
-        ocr.text_recognizer.predictor.try_shrink_memory()
         logger.info(f"ocr: {lines}")
         exist_tags = p['additional']['tag']
         if lines != "":
